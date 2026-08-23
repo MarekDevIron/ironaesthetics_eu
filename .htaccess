@@ -1,0 +1,11 @@
+RewriteEngine On
+
+# config a skryté súbory nikdy neservírovať
+<Files "config.php">
+    Require all denied
+</Files>
+
+# všetko, čo nie je reálny súbor (vlajky), ide do index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]

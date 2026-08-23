@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prepínač ironaesthetics.eu</title>
+<meta name="description" content="Náhľad dizajnu malého prepínača produktových liniek pre ironaesthetics.eu — tri stavy: produkt, 404, domovská.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>
+/* ---------- náhľadová konzola (nie súčasť reálnej stránky) ---------- */
+.console {
+    position: fixed; top: 14px; left: 14px; z-index: 50;
+    display: flex; gap: 6px; align-items: center;
+    background: #131315; border: 1px solid #26262b; border-radius: 999px;
+    padding: 5px 6px 5px 14px;
+}
+.console .label { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: #55555b; margin-right: 4px; }
+.console button {
+    font-family: inherit; font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: #8e8e94;
+    background: transparent; border: 0; border-radius: 999px; padding: 7px 12px; cursor: pointer;
+}
+.console button:hover { color: #fff; }
+.console button.on { background: #9d3552; color: #fff; }
+.view { display: none; }
+.view.on { display: flex; }
+
+/* ---------- samotný náhľad stránky = presne views/style.php ---------- */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; }
+body {
+    min-height: 100vh;
+    font-family: 'Lato', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #0a0a0b;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.wrap {
+    width: 100%;
+    max-width: 880px;
+    padding: 96px 24px 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    justify-content: center;
+}
+.logo { width: 190px; max-width: 60vw; height: auto; margin-bottom: 44px; }
+
+h1.title {
+    font-size: clamp(22px, 4vw, 34px);
+    font-weight: 900;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    line-height: 1.25;
+    text-align: center;
+    margin-bottom: 40px;
+    word-break: break-word;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    width: 100%;
+}
+.btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: #131315;
+    border: 1px solid #26262b;
+    border-radius: 12px;
+    color: #fff;
+    text-decoration: none;
+    padding: 18px 22px;
+    transition: border-color .15s ease, transform .15s ease, background .15s ease;
+}
+@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+.btn:hover {
+    border-color: #9d3552;
+    background: #18161a;
+    transform: translateY(-2px);
+}
+.btn img.flag { width: 32px; height: auto; border-radius: 3px; flex: none; }
+.btn .txt { line-height: 1.2; min-width: 0; }
+.btn .country { display: block; font-size: 17px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.btn .domain  { display: block; font-size: 13px; font-weight: 400; color: #8e8e94; margin-top: 3px; }
+.btn .arrow   { margin-left: auto; color: #9d3552; font-size: 20px; flex: none; transition: transform .15s ease; }
+.btn:hover .arrow { transform: translateX(3px); }
+
+/* odporúčaný obchod podľa geolokácie — odznak na hornej hrane, neprekrýva text */
+.btn.rec { border-color: #9d3552; background: #18161a; }
+.btn.rec .arrow { display: none; }
+.btn .chip {
+    position: absolute;
+    top: -11px;
+    right: 14px;
+    background: #9d3552;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 4px 11px;
+    white-space: nowrap;
+}
+
+.muted { color: #77777d; font-size: 15px; }
+.muted code { background: #17171a; border: 1px solid #26262b; border-radius: 6px; padding: 2px 9px; font-size: 0.95em; color: #c9c9cf; }
+.center { text-align: center; }
+.center p { margin-top: 6px; }
+
+.big-code {
+    font-size: clamp(52px, 10vw, 84px);
+    font-weight: 900;
+    color: #9d3552;
+    letter-spacing: .04em;
+    line-height: 1;
+    margin-bottom: 10px;
+}
+
+footer.credit {
+    padding: 18px 0 26px;
+    font-size: 11px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: #55555b;
+}
+
+@media (max-width: 560px) {
+    .grid { grid-template-columns: 1fr; gap: 12px; margin-top: 14px; }
+    .logo { margin-bottom: 32px; }
+    h1.title { margin-bottom: 28px; }
+    .console { left: 50%; transform: translateX(-50%); }
+}
+</style>
+</head>
+<body>
+
+<nav class="console" aria-label="Náhľad stavov">
+    <span class="label">Náhľad</span>
+    <button type="button" class="on" data-view="v-produkt">Produkt</button>
+    <button type="button" data-view="v-404">Nenájdené</button>
+    <button type="button" data-view="v-domov">Domov</button>
+</nav>
+
+<!-- stav: produkt (geolokácia = SK → odporúčaný slovenský obchod) -->
+<section id="v-produkt" class="view on">
+<div class="wrap">
+    <img class="logo" src="__LOGO__" alt="IRON AESTHETICS">
+    <h1 class="title">Dámske tepláky Iron Aesthetics Cargo, čierne</h1>
+    <div class="grid">
+        <a class="btn rec" href="#" onclick="return false;">
+            <img class="flag" src="__FL_SK__" alt="" width="32">
+            <span class="txt"><span class="country">Slovak</span><span class="domain">ironaesthetics.sk</span></span>
+            <span class="chip">Odporúčaný obchod</span>
+        </a>
+        <a class="btn" href="#" onclick="return false;">
+            <img class="flag" src="__FL_CZ__" alt="" width="32">
+            <span class="txt"><span class="country">Czech</span><span class="domain">ironaesthetics.cz</span></span>
+            <span class="arrow">&#8594;</span>
+        </a>
+        <a class="btn" href="#" onclick="return false;">
+            <img class="flag" src="__FL_HU__" alt="" width="32">
+            <span class="txt"><span class="country">Hungarian</span><span class="domain">ironaesthetics.hu</span></span>
+            <span class="arrow">&#8594;</span>
+        </a>
+        <a class="btn" href="#" onclick="return false;">
+            <img class="flag" src="__FL_RO__" alt="" width="32">
+            <span class="txt"><span class="country">Romanian</span><span class="domain">ironaesthetics.ro</span></span>
+            <span class="arrow">&#8594;</span>
+        </a>
+    </div>
+</div>
+<footer class="credit">ironaesthetics.eu</footer>
+</section>
+
+<!-- stav: nenájdené -->
+<section id="v-404" class="view">
+<div class="wrap center">
+    <img class="logo" src="__LOGO__" alt="IRON AESTHETICS">
+    <div class="big-code">404</div>
+</div>
+<footer class="credit">ironaesthetics.eu</footer>
+</section>
+
+<!-- stav: domov -->
+<section id="v-domov" class="view">
+<div class="wrap center">
+    <img class="logo" src="__LOGO__" alt="IRON AESTHETICS">
+</div>
+<footer class="credit">ironaesthetics.eu</footer>
+</section>
+
+<script>
+document.querySelectorAll('.console button').forEach(function (b) {
+    b.addEventListener('click', function () {
+        document.querySelectorAll('.console button').forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('on'); });
+        document.getElementById(b.dataset.view).classList.add('on');
+    });
+});
+</script>
+</body>
+</html>
