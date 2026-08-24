@@ -49,8 +49,82 @@ php -S 127.0.0.1:8060 index.php
 open http://127.0.0.1:8060/P2805A15382
 ```
 
-Na produkcii (Apache + PHP 8.2) stačí nahodiť obsah tejto zložky do webrootu —
-`.htaccess` presmeruje všetko na `index.php`.
+Na produkcii stačí nahodiť obsah tejto zložky do webrootu — `.htaccess` presmeruje
+všetko na `index.php`. Kód je kompatibilný s **PHP 7.4+** (overené `php -l` pod 7.4),
+takže na verzii PHP na cieľovom serveri nezáleží.
+
+## Nasadenie na Contabo (web11)
+
+Nasadené 24. 8. 2026 na `ia.eu.iron.getdevbox.com` — ISPConfig web **web11** pod
+klientom `client0` (nie je to náš `web8`, ten je pre zlúčený multistore).
+
+| | |
+|---|---|
+| Docroot | `/var/www/clients/client0/web11/web` |
+| Shell user | `default_iron_eu` |
+| PHP | 7.4, pool `web11.sock` |
+
+```bash
+rsync -rlpt --exclude '.git' --exclude '.preview' --exclude '.DS_Store' \
+  index.php lib.php .htaccess config.php views img fonts \
+  default_iron_eu@169.58.34.110:/var/www/clients/client0/web11/web/
+```
+
+Po prvom nahratí ešte na serveri:
+
+```bash
+mkdir -p cache && chmod 700 cache      # súborová keš, PHP do nej zapisuje
+chmod 600 config.php                   # rsync ho nahrá ako 644
+mv standard_index.html standard_index.html.povodny
+```
+
+To posledné je dôležité: ISPConfig má `standard_index.html` v `DirectoryIndex`,
+takže bez odloženia by na `/` svietil jeho placeholder namiesto našej appky.
+(`.htaccess` koreň nechytá — `RewriteCond %{REQUEST_FILENAME} !-d` na adresár nesadne.)
+
+Overené po nasadení: `config.php`, `cache/` aj `.htaccess` vracajú **403**, `lib.php`
+sa vykoná a vráti prázdne telo (zdroják nie je vidno), hlavička `X-Robots-Tag` sedí.
+Živé DB sú z Contaba dosiahnuteľné — appka tam beží rovnako ako na starom hostingu
+(prvý request ~1,7 s, ďalšie z keše ~0,15 s).
+
+### Po zlúčení shopov: jeden záznam v configu
+
+Keď pobeží zlúčený multistore (`web8`, DB `c1all`), `databases` sa zmenší
+z troch záznamov na **jeden**:
+
+```php
+'databases' => [
+    [
+        'name'   => 'ALL',
+        'host'   => 'localhost',      // DB je na tom istom boxe
+        'user'   => '…',              // ideálne vyhradený SELECT-only user
+        'pass'   => '…',
+        'db'     => 'c1all',
+        'prefix' => 'ps_',
+    ],
+],
+```
+
+V kóde sa meniť nemusí nič — appka si štyri shop views načíta sama z `ps_shop`
+a `ps_shop_url`, presne tak, ako dnes rozlišuje SK a CZ v jednej SKCZ databáze.
+
+Tým **zmizne aj to, že na tomto boxe ležia prihlásenia do živých databáz**: appka
+bude čítať lokálnu DB a k živým shopom už nepotrebuje prístup vôbec.
+
+Zmení sa aj správanie lookupu: po zlúčení sú kombinácie spárované cez referenciu,
+takže jedna `P…A…` vráti **jeden produkt so štyrmi shopmi** namiesto troch
+samostatných hľadaní v troch databázach.
+
+### Bezpečnostné poznámky
+
+- DB useri v configu sú dnes **vlastníci tých databáz, nie read-only** — appka pritom
+  robí výhradne `SELECT`. Kým sa nepoužije `c1all`, patrí sem vyhradený user
+  s právom `SELECT` na `ps_product*`, `ps_shop*`, `ps_configuration`.
+- `ia.eu.iron.getdevbox.com` je verejne dostupná **bez basic auth** (na rozdiel od
+  `.all` domén). Stránka je `noindex, nofollow` a názvy produktov aj URL sú verejné,
+  ale ak má byť dev doména zavretá, treba doplniť `.htpasswd`.
+- Do webrootu nikdy nenasadzovať `test.php`, `dev.sh`, `README.md` ani `.git` —
+  `.htaccess` ich síce blokuje, ale najistejšie je ich tam nemať (viď `rsync` vyššie).
 
 ## Rozdiely voči Laravel verzii
 
