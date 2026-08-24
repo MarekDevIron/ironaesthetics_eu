@@ -1,11 +1,23 @@
 RewriteEngine On
 
-# config a skryté súbory nikdy neservírovať
-<Files "config.php">
-    Require all denied
-</Files>
+# Let's Encrypt (ISPConfig) overuje doménu cez /.well-known/acme-challenge/ — musí
+# prejsť skôr, než nižšie zakážeme všetko bodkové, inak zlyhá vydanie aj obnova certifikátu.
+RewriteRule ^\.well-known/ - [L]
 
-# všetko, čo nie je reálny súbor (vlajky), ide do index.php
+# .git (ak deploy nahráva celý pracovný strom), bodkové súbory, config a dev/diag
+# súbory nikdy neservírovať — tieto by inak boli priamo sťahovateľné, lebo sú to
+# reálne súbory a RewriteCond nižšie ich preto nepošle cez index.php.
+RewriteRule (^|/)\. - [F,L]
+
+# Súborová keš je kvôli open_basedir vo webroote (viď cache_dir() v lib.php) — sú to
+# reálne .json súbory s názvami produktov a URL shopov, bez tohto by sa dali stiahnuť.
+RewriteRule ^cache(/|$) - [F,L]
+
+<FilesMatch "^(config\.php|config\.example\.php|test\.php|dev\.sh|dev-serve\.command|README\.md)$">
+    Require all denied
+</FilesMatch>
+
+# všetko, čo nie je reálny súbor (vlajky, fonty), ide do index.php
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [QSA,L]

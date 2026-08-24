@@ -12,12 +12,13 @@ function lookup(array $config, string $code): array
     $buttons = [];
     $errors  = [];
     $title   = '';
+    $shopTtl = (int)($config['shop_ttl'] ?? 3600);
 
     foreach ($config['databases'] as $dbConf) {
         try {
             $pdo = db($dbConf);
             $prefix = $dbConf['prefix'] ?? 'ps_';
-            $shops  = discover_shops($pdo, $prefix);
+            $shops  = discover_shops_cached($pdo, $prefix, $dbConf['name'], $shopTtl);
 
             foreach ($shops as $shop) {
                 $row = find_combination($pdo, $prefix, $shop, $code);
@@ -68,7 +69,33 @@ function db(array $c): PDO
     return $pool[$key];
 }
 
-/** Aktívne shop views v jednej DB — doména + hlavný jazyk. */
+/**
+ * discover_shops() zabalené v keši (súbor/APCu, `shop_ttl` z configu). Zoznam shopov
+ * a ich routing config (pretty URL, anchor separátor) sa mení len pri zásahu v BO,
+ * takže netreba naň platiť DB dotazom pri každom requeste — na rozdiel od samotného
+ * product lookupu (kešovaný zvlášť, kratšie, per kód).
+ */
+function discover_shops_cached(PDO $pdo, string $prefix, string $dbName, int $ttl): array
+{
+    $key = 'shops_'.$dbName;
+    if ($ttl > 0) {
+        $cached = cache_get($key);
+        if (is_array($cached)) {
+            return $cached;
+        }
+    }
+    $shops = discover_shops($pdo, $prefix);
+    if ($ttl > 0 && $shops !== []) {
+        cache_put($key, $shops, $ttl);
+    }
+    return $shops;
+}
+
+/**
+ * Aktívne shop views v jednej DB — doména, hlavný jazyk a routing config
+ * (pretty URL pravidlo + anchor separátor), nech ich build_url()/build_anchor()
+ * nemusia dohľadávať zvlášť za behu.
+ */
 function discover_shops(PDO $pdo, string $prefix): array
 {
     $shops = [];
@@ -80,7 +107,10 @@ function discover_shops(PDO $pdo, string $prefix): array
          ORDER BY s.id_shop ASC");
 
     foreach ($rows as $r) {
-        $defaultLang = (int)(cfg($pdo, $prefix, 'PS_LANG_DEFAULT', (int)$r['id_shop_group'], (int)$r['id_shop']) ?? 1);
+        $idShop  = (int)$r['id_shop'];
+        $idGroup = (int)$r['id_shop_group'];
+
+        $defaultLang = (int)(cfg($pdo, $prefix, 'PS_LANG_DEFAULT', $idGroup, $idShop) ?? 1);
         $lang = q($pdo,
             "SELECT iso_code, name FROM {$prefix}lang WHERE id_lang = ? AND active = 1",
             [$defaultLang]);
@@ -88,13 +118,16 @@ function discover_shops(PDO $pdo, string $prefix): array
             continue;
         }
         $shops[] = [
-            'id_shop'       => (int)$r['id_shop'],
-            'id_shop_group' => (int)$r['id_shop_group'],
+            'id_shop'       => $idShop,
+            'id_shop_group' => $idGroup,
             'domain'        => $r['domain'],
             'uri'           => rtrim($r['physical_uri'] ?? '', '/').'/'.ltrim($r['virtual_uri'] ?? '', '/'),
             'lang_id'       => $defaultLang,
             'lang_iso'      => strtolower($lang[0]['iso_code']),
             'lang_name'     => $lang[0]['name'],
+            'rewriting'     => cfg($pdo, $prefix, 'PS_REWRITING_SETTINGS', $idGroup, $idShop),
+            'route_product' => cfg($pdo, $prefix, 'PS_ROUTE_product', $idGroup, $idShop),
+            'anchor_sep'    => cfg($pdo, $prefix, 'PS_ATTRIBUTE_ANCHOR_SEPARATOR', $idGroup, $idShop),
         ];
     }
     return $shops;
@@ -127,6 +160,12 @@ function cfg(PDO $pdo, string $prefix, string $name, int $idShopGroup, int $idSh
 /**
  * Nájde kombináciu podľa kódu. Kód je väčšinou P{id}A{ipa}, takže primárne
  * hľadáme priamo cez id (indexované); inak spätným dohľadom po reference.
+ *
+ * Pozor, reference sa generuje z ID master shopu (SK/CZ), takže na HU/RO ID
+ * väčšinou NESEDIA a rozhoduje až fallback po reference — a tá nie je unikátna
+ * (na HU aj RO je ~25 zdvojených, z toho 6 kódov má jednu kópiu aktívnu a druhú
+ * nie). Preto ORDER BY: bez neho by LIMIT 1 mohol vrátiť neaktívnu kópiu
+ * a tlačidlo daného shopu by bez príčiny zmizlo.
  */
 function find_combination(PDO $pdo, string $prefix, array $shop, string $code): ?array
 {
@@ -141,6 +180,7 @@ function find_combination(PDO $pdo, string $prefix, array $shop, string $code): 
          LEFT JOIN {$prefix}category_lang cl
               ON cl.id_category = p.id_category_default AND cl.id_shop = :shop3 AND cl.id_lang = :lang2
          WHERE %WHERE%
+         ORDER BY ps.active DESC, pa.id_product_attribute ASC
          LIMIT 1";
 
     $base = [
@@ -174,12 +214,13 @@ function find_combination(PDO $pdo, string $prefix, array $shop, string $code): 
 /**
  * Zostaví produktové URL rovnakou logikou ako PS 1.6 Link::getProductLink +
  * Dispatcher::createUrl (tokeny {rewrite}, {category:/}, {-:ean13} …)
- * + anchor kombinácie (#/velikost-m) ako getAnchor().
+ * + anchor kombinácie (#/velikost-m) ako getAnchor(). Routing config (rewriting,
+ * route_product, anchor_sep) berie z $shop — naplnené a kešované v discover_shops().
  */
 function build_url(PDO $pdo, string $prefix, array $shop, array $row): ?string
 {
-    $rewriting = cfg($pdo, $prefix, 'PS_REWRITING_SETTINGS', $shop['id_shop_group'], $shop['id_shop']);
-    $rule      = cfg($pdo, $prefix, 'PS_ROUTE_product', $shop['id_shop_group'], $shop['id_shop']);
+    $rewriting = $shop['rewriting'];
+    $rule      = $shop['route_product'];
 
     if ($rule === null || $rule === '') {
         $rule = '{category:/}{id}-{rewrite}{-:ean13}.html'; // default product_rule z Dispatcheru
@@ -221,6 +262,9 @@ function build_url(PDO $pdo, string $prefix, array $shop, array $row): ?string
     } else {
         $url = 'https://'.$shop['domain'].$shop['uri']
             .'index.php?controller=product&id_product='.$row['id_product'].'&id_lang='.$shop['lang_id'];
+        if ((int)$row['ipa'] > 0) {
+            $url .= '&id_product_attribute='.$row['ipa'];
+        }
     }
 
     $anchor = build_anchor($pdo, $prefix, $shop, (int)$row['id_product'], (int)$row['ipa']);
@@ -234,7 +278,7 @@ function build_anchor(PDO $pdo, string $prefix, array $shop, int $idProduct, int
     if ($ipa <= 0) {
         return '';
     }
-    $sep = cfg($pdo, $prefix, 'PS_ATTRIBUTE_ANCHOR_SEPARATOR', $shop['id_shop_group'], $shop['id_shop']);
+    $sep = $shop['anchor_sep'] ?? null;
     if ($sep === null || $sep === '') {
         $sep = '-';
     }
@@ -284,7 +328,38 @@ function q(PDO $pdo, string $sql, array $args = []): array
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// ---------- keš (APCu ak je, inak súbory v sys temp) ----------
+// ---------- keš (APCu ak je, inak súbory vo vlastnom cache/) ----------
+
+/**
+ * Vlastný cache/ priečinok namiesto sys_get_temp_dir(): ISPConfig beží typicky
+ * s php-fpm pool per web a open_basedir orezaným na docroot webu (+ /tmp nemusí
+ * byť v zozname) — súborová keš mimo webrootu by tak potichu nikdy nezapisovala
+ * a každý request by padal na plný DB lookup. cache/ je v .gitignore, deploy ho
+ * nemaže; ak by z nejakého dôvodu nebol zapisovateľný, spadneme na sys temp.
+ */
+function cache_dir(): string
+{
+    static $dir = null;
+    if ($dir !== null) {
+        return $dir;
+    }
+    $local = __DIR__.'/cache';
+    if (is_dir($local) || @mkdir($local, 0775, true)) {
+        if (is_writable($local)) {
+            // keš leží vo webroote → vlastný zákaz prístupu ako druhá poistka
+            // popri pravidle v hlavnom .htaccess (keby sa appka nasadila inam)
+            if (!is_file($local.'/.htaccess')) {
+                @file_put_contents(
+                    $local.'/.htaccess',
+                    "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n"
+                    ."<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n"
+                );
+            }
+            return $dir = $local;
+        }
+    }
+    return $dir = sys_get_temp_dir();
+}
 
 function cache_get(string $key)
 {
@@ -294,10 +369,12 @@ function cache_get(string $key)
             return $v;
         }
     }
-    $f = sys_get_temp_dir().'/eu-prepinac_'.md5($key).'.json';
+    $f = cache_dir().'/eu-prepinac_'.md5($key).'.json';
     if (is_file($f)) {
-        $c = json_decode((string)file_get_contents($f), true);
-        if (is_array($c) && time() - (int)$c['t'] < (int)$c['ttl']) {
+        $c = json_decode((string)@file_get_contents($f), true);
+        // torzo súboru (súbežný zápis) alebo iný formát → ber to ako miss, nie ako warning
+        if (is_array($c) && isset($c['t'], $c['ttl'], $c['data'])
+            && time() - (int)$c['t'] < (int)$c['ttl']) {
             return $c['data'];
         }
     }
@@ -306,75 +383,27 @@ function cache_get(string $key)
 
 function cache_put(string $key, $data, int $ttl): void
 {
-    if (function_exists('apcu_store')) {
-        apcu_store('eu-prepinac_'.$key, $data, $ttl);
+    if (function_exists('apcu_store') && apcu_store('eu-prepinac_'.$key, $data, $ttl)) {
+        return; // APCu je zdieľané naprieč php-fpm workermi, súborová keš navyše je zbytočná
     }
-    $f = sys_get_temp_dir().'/eu-prepinac_'.md5($key).'.json';
-    @file_put_contents($f, json_encode(['t' => time(), 'ttl' => $ttl, 'data' => $data]));
+    $f = cache_dir().'/eu-prepinac_'.md5($key).'.json';
+    // LOCK_EX: dvaja php-fpm workeri píšuci naraz by inak nechali polovičný súbor
+    @file_put_contents($f, json_encode(['t' => time(), 'ttl' => $ttl, 'data' => $data]), LOCK_EX);
 }
 
 // ---------- geolokácia ----------
 
-/** IP návštevníka (verejná) — za proxy sa čítajú hlavičky, lokálne IP vráti null. */
-function client_ip(): ?string
-{
-    foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_CLIENT_IP', 'REMOTE_ADDR'] as $k) {
-        if (!empty($_SERVER[$k])) {
-            $ip = trim((string)explode(',', (string)$_SERVER[$k])[0]);
-            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false) {
-                return $ip;
-            }
-        }
-    }
-    return null;
-}
-
 /**
- * Krajina návštevníka — skúsi zdroje postupne, vráti prvú odpoveď:
- * 1) Cloudflare hlavička (ak by web niekedy bežal za CF), 2) ip-api.com,
- * 3) ipwho.is, 4) geojs.io. Žiadny kľúč, všetko free.
+ * Krajina návštevníka zo servera — len Cloudflare hlavička, žiadne sieťové volanie.
+ * Pôvodná verzia skúšala aj ip-api.com/ipwho.is/geojs.io priamo z PHP (sekvenčne,
+ * až 3× 2,5 s timeout) — to je zbytočné blokovanie requestu navyše, keď produktová
+ * stránka (views/product.php) má presne na tento prípad JS fallback na geojs.io,
+ * ktorý beží v prehliadači návštevníka, nie na našom serveri. Kým web nejde cez CF,
+ * toto prakticky vždy vráti null a geo dorieši JS — čo je v poriadku, stránka sa
+ * vykreslí okamžite a odznak sa dolepí o zlomok sekundy neskôr.
  */
-function geo_country(?string $ip): ?string
+function geo_country(): ?string
 {
-    if ($ip === null) {
-        return null;
-    }
-    if (!empty($_SERVER['HTTP_CF_IPCOUNTRY']) && preg_match('/^[A-Z]{2}$/', $_SERVER['HTTP_CF_IPCOUNTRY'])) {
-        return $_SERVER['HTTP_CF_IPCOUNTRY'];
-    }
-
-    $sources = [
-        'http://ip-api.com/json/'.$ip.'?fields=countryCode' => 'countryCode',
-        'https://ipwho.is/'.$ip => 'country_code',
-        'https://get.geojs.io/v1/ip/country/'.$ip.'.json' => 'country',
-    ];
-
-    $ctx = stream_context_create(['http' => ['timeout' => 2.5, 'ignore_errors' => true]]);
-    foreach ($sources as $url => $key) {
-        $raw = @file_get_contents($url, false, $ctx);
-        if ($raw === false) {
-            continue;
-        }
-        $json = json_decode($raw, true);
-        $cc = is_array($json) ? ($json[$key] ?? null) : null;
-        if (is_string($cc) && preg_match('/^[A-Za-z]{2}$/', $cc)) {
-            return strtoupper($cc);
-        }
-    }
-    return null;
-}
-
-/** Geo + keš per IP — zásah 24 h, neúspech len 1 h (mobilné siete menia IP). */
-function geo_with_cache(?string $ip): ?string
-{
-    if ($ip === null) {
-        return null;
-    }
-    $c = cache_get('geo_'.$ip);
-    if (is_array($c) && array_key_exists('cc', $c)) {
-        return $c['cc'];
-    }
-    $cc = geo_country($ip);
-    cache_put('geo_'.$ip, ['cc' => $cc], $cc !== null ? 86400 : 3600);
-    return $cc;
+    $cc = $_SERVER['HTTP_CF_IPCOUNTRY'] ?? null;
+    return (is_string($cc) && preg_match('/^[A-Za-z]{2}$/', $cc)) ? strtoupper($cc) : null;
 }

@@ -16,7 +16,30 @@ priamo do živých DB shopov a vypíše tlačidlá na produkt pre každý shop, 
   daného shopu (fallback na default `{category:/}{id}-{rewrite}{-:ean13}.html`),
   doplní anchor kombinácie (`#/velikost-m`) ako `Product::getAnchor()`.
 - Tlačidlo ukáže len pre shopy, kde kombinácia existuje a produkt je aktívny.
-- Výsledok sa kešuje do súboru (`cache_ttl`, default 10 min).
+- Výsledok sa kešuje (APCu, inak súbor v `cache/`) na `cache_ttl` (default 10 min),
+  zoznam shopov a ich routing config zvlášť na `shop_ttl` (default 1 h).
+
+## Geolokácia a jazyk nadpisu
+
+Cieľ: návštevník z Maďarska má vidieť názov produktu po maďarsky, nie po slovensky.
+Názov ide z `pl.name` v hlavnom jazyku každého shopu, takže ho appka má pre všetky
+shopy naraz — vyberá sa len, ktorý sa zobrazí.
+
+- **Server** (`geo_country()` v `lib.php`) číta jedine hlavičku `HTTP_CF_IPCOUNTRY`.
+  `ironaesthetics.eu` **nejde cez Cloudflare** (NS aj A záznam mieria na asdata /
+  `185.66.200.100`), takže táto hlavička v produkcii nepríde a funkcia vždy vráti `null`.
+  Vetva v `index.php`, ktorá podľa `$geo` prepína `$title`, sa preto reálne uplatní až
+  keby web niekedy za Cloudflare išiel. Žiadne sieťové volanie z PHP sa nerobí — request
+  by to len zdržalo.
+- **Prehliadač** (JS v `views/product.php`) je preto hlavná cesta: zavolá
+  `get.geojs.io/v1/ip/country.json`, podľa kódu krajiny nájde tlačidlo cez `data-cc`
+  a z jeho `data-name` prepíše `<h1 id="product-title">`, `document.title` aj
+  `<html lang>`; navyše to tlačidlo zvýrazní (`.rec` + odznak). Každé tlačidlo teda
+  nesie názov produktu vo svojom jazyku v `data-name` — inak by JS nemal odkiaľ brať text.
+- Kým fetch dobehne (rádovo stovky ms), je v nadpise názov z prvého shopu v poradí
+  `config['databases']` (typicky SK). Krajina mimo SK/CZ/HU/RO alebo nedostupné geo API
+  = nadpis aj tlačidlá ostanú v tomto východiskovom stave, nič sa nerozbije.
+- Stránka je `noindex, nofollow`, takže jazyk „pre robota" neriešime.
 
 ## Lokálny beh
 
@@ -43,3 +66,5 @@ Na produkcii (Apache + PHP 8.2) stačí nahodiť obsah tejto zložky do webrootu
 - Jazykový prefix do URL nepridáva — každé tlačidlo cielí na hlavný jazyk
   daného shop view (rovnako ako webservice kontext v starej verzii).
 - Heslá sú mimo gitu (`config.php` v `.gitignore`, `.htaccess` ho blokuje).
+- Keď na produkcii treba vidieť, prečo lookup zlyhal, dočasne `'debug' => true`
+  v `config.php` — inak sa chyby DB píšu len do error_logu, nie na stránku.
