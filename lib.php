@@ -38,6 +38,7 @@ function lookup(array $config, string $code): array
                     'domain'    => preg_replace('~^www\.~', '', $shop['domain']),
                     'iso'       => $flag,
                     'url'       => $url,
+                    'name'      => $row['name'], // názov produktu v jazyku shopu
                 ];
                 if ($title === '') {
                     $title = $row['name'];

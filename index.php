@@ -43,11 +43,23 @@ if (!$results['found']) {
     exit;
 }
 
+// názov produktu v jazyku krajiny návštevníka (fallback: prvý nájdený shop)
+$geo   = geo_with_cache(client_ip());
+$title = $results['title'];
+if ($geo !== null) {
+    foreach ($results['buttons'] as $b) {
+        if (!empty($b['name']) && strtoupper((string)$b['iso']) === strtoupper($geo)) {
+            $title = $b['name'];
+            break;
+        }
+    }
+}
+
 render('product', [
     'code'    => $code,
-    'title'   => $results['title'],
+    'title'   => $title,
     'buttons' => $results['buttons'],
-    'geo'     => geo_with_cache(client_ip()),
+    'geo'     => $geo,
 ]);
 
 // ---------- cache + výstup ----------
