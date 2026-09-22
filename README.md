@@ -66,31 +66,41 @@ klientom `client0` (nie je to náš `web8`, ten je pre zlúčený multistore).
 
 ```bash
 rsync -rlpt --exclude '.git' --exclude '.preview' --exclude '.DS_Store' \
-  index.php lib.php .htaccess config.php views img fonts \
+  index.php lib.php .htaccess views img fonts \
   default_iron_eu@169.58.34.110:/var/www/clients/client0/web11/web/
 ```
 
-Po prvom nahratí ešte na serveri:
+`config.php` sa **nenahráva do docrootu**. Od 22. 9. 2026 leží v ISPConfig adresári
+`/var/www/clients/client0/web11/private/config.php` (mimo `web/`, Apache ho nikdy
+neservíruje), rovnako keš v `private/cache/`. `index.php` skúša najprv
+`../private/config.php`, až potom `config.php` vedľa seba; `cache_dir()` to isté pre keš.
+Zálohy configu tiež len do `private/` alebo do `~`, nikdy do `web/` — `.htaccess`
+síce blokuje `config.*` aj `*.bak`, ale je to len poistka.
 
 ```bash
-mkdir -p cache && chmod 700 cache      # súborová keš, PHP do nej zapisuje
-chmod 600 config.php                   # rsync ho nahrá ako 644
-mv standard_index.html standard_index.html.povodny
+# prvé nasadenie
+P=/var/www/clients/client0/web11/private
+install -m 600 config.php $P/config.php      # alebo scp + chmod 600
+mkdir -p $P/cache && chmod 770 $P/cache      # PHP pool beží ako user web11, nie ako shell user
+cd /var/www/clients/client0/web11/web && mv standard_index.html standard_index.html.povodny
 ```
 
-To posledné je dôležité: ISPConfig má `standard_index.html` v `DirectoryIndex`,
-takže bez odloženia by na `/` svietil jeho placeholder namiesto našej appky.
-(`.htaccess` koreň nechytá — `RewriteCond %{REQUEST_FILENAME} !-d` na adresár nesadne.)
+Ak `private/cache` nie je pre PHP zapisovateľný, appka skúsi `web/cache`; ak ani ten,
+keš sa **vypne** a raz to zaloguje (`error_log`). Do `/tmp` nikdy nepadá — je zdieľaný
+a názvy súborov sú predvídateľné.
 
 Overené po nasadení: `config.php`, `cache/` aj `.htaccess` vracajú **403**, `lib.php`
 sa vykoná a vráti prázdne telo (zdroják nie je vidno), hlavička `X-Robots-Tag` sedí.
 Živé DB sú z Contaba dosiahnuteľné — appka tam beží rovnako ako na starom hostingu
 (prvý request ~1,7 s, ďalšie z keše ~0,15 s).
 
-### Po zlúčení shopov: jeden záznam v configu
+### Po zlúčení shopov: jeden záznam v configu (hotové 22. 9. 2026)
 
-Keď pobeží zlúčený multistore (`web8`, DB `c1all`), `databases` sa zmenší
-z troch záznamov na **jeden**:
+Od 22. 9. 2026 appka na web11 číta zlúčený multistore (`web8`, DB `c1all` na tom istom
+boxe) — `databases` má **jeden** záznam, nekešovaný lookup klesol z ~0,6 s na ~0,1 s
+(odpadli tri spojenia na asdata). Prepnutie robí `tools/contabo/web11/prepni-config-c1all.sh`
+v koreni projektu IRON. Odkazy na HU/RO sú odvtedy bez `www` (hlavná doména v
+`ps_shop_url` web8).
 
 ```php
 'databases' => [
@@ -120,6 +130,8 @@ samostatných hľadaní v troch databázach.
 - DB useri v configu sú dnes **vlastníci tých databáz, nie read-only** — appka pritom
   robí výhradne `SELECT`. Kým sa nepoužije `c1all`, patrí sem vyhradený user
   s právom `SELECT` na `ps_product*`, `ps_shop*`, `ps_configuration`.
+- Na 404 sa každý neznámy kód dopytuje DB (kešujú sa len nálezy) — bežný bot scan
+  to unesie, pri agresívnom by pomohol rate limit v Apache.
 - `ia.eu.iron.getdevbox.com` je verejne dostupná **bez basic auth** (na rozdiel od
   `.all` domén). Stránka je `noindex, nofollow` a názvy produktov aj URL sú verejné,
   ale ak má byť dev doména zavretá, treba doplniť `.htpasswd`.

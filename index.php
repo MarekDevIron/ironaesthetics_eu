@@ -21,8 +21,15 @@ if (PHP_SAPI === 'cli-server') {
 
 require __DIR__.'/lib.php';
 
-$configFile = __DIR__.'/config.php';
-if (!is_file($configFile)) {
+// Config najprv mimo docroot (ISPConfig: <web>/private/ vedľa <web>/web/), až potom vedľa index.php.
+$configFile = null;
+foreach ([dirname(__DIR__).'/private/config.php', __DIR__.'/config.php'] as $f) {
+    if (is_file($f)) {
+        $configFile = $f;
+        break;
+    }
+}
+if ($configFile === null) {
     // typický fresh deploy: zabudnuté `cp config.example.php config.php`
     error_log('[eu-prepinac] chýba config.php — skopíruj config.example.php a doplň heslá');
     http_response_code(500);

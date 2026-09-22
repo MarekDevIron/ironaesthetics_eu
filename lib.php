@@ -331,34 +331,36 @@ function q(PDO $pdo, string $sql, array $args = []): array
 // ---------- keš (APCu ak je, inak súbory vo vlastnom cache/) ----------
 
 /**
- * Vlastný cache/ priečinok namiesto sys_get_temp_dir(): ISPConfig beží typicky
- * s php-fpm pool per web a open_basedir orezaným na docroot webu (+ /tmp nemusí
- * byť v zozname) — súborová keš mimo webrootu by tak potichu nikdy nezapisovala
- * a každý request by padal na plný DB lookup. cache/ je v .gitignore, deploy ho
- * nemaže; ak by z nejakého dôvodu nebol zapisovateľný, spadneme na sys temp.
+ * Súborová keš: najprv <web>/private/cache (ISPConfig, mimo docroot), potom cache/
+ * vedľa index.php. Zdieľaný sys_get_temp_dir() zámerne NIE — tam vie iný user na boxe
+ * podvrhnúť súbor s predvídateľným názvom. Ak nie je zapisovateľný ani jeden, keš
+ * sa len vypne (každý request = plný lookup) a raz sa to zaloguje.
  */
-function cache_dir(): string
+function cache_dir(): ?string
 {
-    static $dir = null;
-    if ($dir !== null) {
+    static $dir = false;
+    if ($dir !== false) {
         return $dir;
     }
-    $local = __DIR__.'/cache';
-    if (is_dir($local) || @mkdir($local, 0775, true)) {
-        if (is_writable($local)) {
-            // keš leží vo webroote → vlastný zákaz prístupu ako druhá poistka
-            // popri pravidle v hlavnom .htaccess (keby sa appka nasadila inam)
-            if (!is_file($local.'/.htaccess')) {
-                @file_put_contents(
-                    $local.'/.htaccess',
-                    "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n"
-                    ."<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n"
-                );
-            }
-            return $dir = $local;
-        }
+    $private = dirname(__DIR__).'/private/cache';
+    if (is_dir(dirname($private)) && (is_dir($private) || @mkdir($private, 0770)) && is_writable($private)) {
+        return $dir = $private;
     }
-    return $dir = sys_get_temp_dir();
+    $local = __DIR__.'/cache';
+    if ((is_dir($local) || @mkdir($local, 0770)) && is_writable($local)) {
+        // keš leží vo webroote → vlastný zákaz prístupu ako druhá poistka
+        // popri pravidle v hlavnom .htaccess (keby sa appka nasadila inam)
+        if (!is_file($local.'/.htaccess')) {
+            @file_put_contents(
+                $local.'/.htaccess',
+                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n"
+                ."<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n"
+            );
+        }
+        return $dir = $local;
+    }
+    error_log('[eu-prepinac] cache/ nie je zapisovateľný (skúšané '.$private.' a '.$local.') — keš vypnutá');
+    return $dir = null;
 }
 
 function cache_get(string $key)
@@ -369,7 +371,11 @@ function cache_get(string $key)
             return $v;
         }
     }
-    $f = cache_dir().'/eu-prepinac_'.md5($key).'.json';
+    $dir = cache_dir();
+    if ($dir === null) {
+        return null;
+    }
+    $f = $dir.'/eu-prepinac_'.md5($key).'.json';
     if (is_file($f)) {
         $c = json_decode((string)@file_get_contents($f), true);
         // torzo súboru (súbežný zápis) alebo iný formát → ber to ako miss, nie ako warning
@@ -386,7 +392,11 @@ function cache_put(string $key, $data, int $ttl): void
     if (function_exists('apcu_store') && apcu_store('eu-prepinac_'.$key, $data, $ttl)) {
         return; // APCu je zdieľané naprieč php-fpm workermi, súborová keš navyše je zbytočná
     }
-    $f = cache_dir().'/eu-prepinac_'.md5($key).'.json';
+    $dir = cache_dir();
+    if ($dir === null) {
+        return;
+    }
+    $f = $dir.'/eu-prepinac_'.md5($key).'.json';
     // LOCK_EX: dvaja php-fpm workeri píšuci naraz by inak nechali polovičný súbor
     @file_put_contents($f, json_encode(['t' => time(), 'ttl' => $ttl, 'data' => $data]), LOCK_EX);
 }

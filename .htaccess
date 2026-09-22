@@ -9,13 +9,23 @@ RewriteRule ^\.well-known/ - [L]
 # reálne súbory a RewriteCond nižšie ich preto nepošle cez index.php.
 RewriteRule (^|/)\. - [F,L]
 
-# Súborová keš je kvôli open_basedir vo webroote (viď cache_dir() v lib.php) — sú to
-# reálne .json súbory s názvami produktov a URL shopov, bez tohto by sa dali stiahnuť.
-RewriteRule ^cache(/|$) - [F,L]
+# cache/ (ak keš neleží v ../private, viď cache_dir() v lib.php) a views/ nie sú na
+# priame volanie — views bez premenných z index.php len vypíšu prázdnu šablónu.
+RewriteRule ^(cache|views)(/|$) - [F,L]
 
-<FilesMatch "^(config\.php|config\.example\.php|test\.php|dev\.sh|dev-serve\.command|README\.md)$">
+# config.* chytá aj zálohy (config.php.bak by Apache poslal ako text aj s heslom DB),
+# bežné záložné prípony pre istotu tiež. lib.php sa nemá volať napriamo.
+<FilesMatch "^(config\..*|lib\.php|test\.php|dev\.sh|dev-serve\.command|README\.md|.*\.(bak|old|orig|novy|povodny|sql|log|swp))$">
     Require all denied
 </FilesMatch>
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # inline <style>/<script> vo views, geolokácia z prehliadača cez get.geojs.io
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src https://get.geojs.io; frame-ancestors 'none'"
+</IfModule>
 
 # všetko, čo nie je reálny súbor (vlajky, fonty), ide do index.php
 RewriteCond %{REQUEST_FILENAME} !-f
